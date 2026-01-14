@@ -3,36 +3,70 @@ from rlbot.utils.structures.game_data_struct import GameTickPacket
 
 from util.drive import steer_toward_target
 from util.vec import Vec3
+from util.sequence import Sequence, ControlStep
+
 
 class Knarr(BaseAgent):
 
     def __init__(self, name, team, index):
         super().__init__(name, team, index)
+        self.active_sequence: Sequence = None
 
     def initialize_agent(self):
         print("Knarr is on team: ", self.team)
 
-    targetBoostPad = 3
-
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
         my_car = packet.game_cars[self.index]
-        controller = SimpleControllerState()
+        controls = SimpleControllerState()
 
         field = self.get_field_info()
-        target = field.boost_pads[self.targetBoostPad]
+
+        if self.active_sequence is not None and not self.active_sequence.done:
+            controls = self.active_sequence.tick(packet)
+            if controls is not None:
+                return controls
 
         my_location = Vec3(my_car.physics.location)
-        target_location = Vec3(target.location)
+        ball_location = Vec3(packet.game_ball.physics.location)
 
-        print("Car location: ", my_location)
-        print("Target location: ", target_location)
-        # self.renderer.draw_string_3d(my_location, 1, 1, f'{my_location} : {target_location}', self.renderer.white())
-        self.renderer.draw_string_3d(my_location, 1, 1, 'Knarr', self.renderer.white())
+        target_location = ball_location
 
-        controller.steer = steer_toward_target(my_car, target_location)
+        controls.steer = steer_toward_target(my_car, target_location)
+        controls.throttle = 1
 
-        controller.throttle = 0.1
+        if -0.5 < controls.steer < 0.5:
+            controls.boost = True
 
-        return controller
+        if my_location.dist(target_location) < 550:
+            if my_location.z < target_location.z + 100:
+                self.front_flip(packet)
 
+            elif my_location.z < target_location.z + 500:
+                self.active_sequence = Sequence([
+                    ControlStep(0.2, SimpleControllerState(jump=True)),
+                    ControlStep(0.05, SimpleControllerState(jump=False)),
+                    ControlStep(0.2, SimpleControllerState(jump=True, pitch=-1)),
+                    ControlStep(0.8, SimpleControllerState()),
+                ])
+            
+            else:
+                self.active_sequence = Sequence([
+                    ControlStep(0.2, SimpleControllerState(jump=True)),
+                    ControlStep(0.05, SimpleControllerState(jump=False)),
+                    ControlStep(0.2, SimpleControllerState(jump=True)),
+                    ControlStep(0.05, SimpleControllerState()),
+                ])
+
+        return controls
     
+    def front_flip(self, packet):
+
+        self.active_sequence = Sequence([
+            ControlStep(0.05, SimpleControllerState(jump=True)),
+            ControlStep(0.05, SimpleControllerState(jump=False)),
+            ControlStep(0.2, SimpleControllerState(jump=True, pitch=-1)),
+            ControlStep(0.8, SimpleControllerState()),
+        ])
+
+
+        return self.active_sequence.tick(packet)
