@@ -15,6 +15,7 @@ class Knarr(BaseAgent):
     def initialize_agent(self):
         print("Knarr is on team: ", self.team)
 
+    current = "ball"
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
         my_car = packet.game_cars[self.index]
         controls = SimpleControllerState()
@@ -27,9 +28,17 @@ class Knarr(BaseAgent):
                 return controls
 
         my_location = Vec3(my_car.physics.location)
+        my_speed = Vec3(my_car.physics.velocity)
         ball_location = Vec3(packet.game_ball.physics.location)
 
-        target_location = ball_location
+        if self.behind_ball(self.team, my_location, ball_location):
+            target_location = ball_location
+            current = "ball"
+        else:
+            target_location = Vec3(0, 3500 * (-1 if self.team == 0 else 1), 100)
+            current = "rotate"
+
+        self.renderer.draw_line_3d(my_location, target_location, self.renderer.cyan())
 
         controls.steer = steer_toward_target(my_car, target_location)
         controls.throttle = 1
@@ -37,28 +46,43 @@ class Knarr(BaseAgent):
         if -0.5 < controls.steer < 0.5:
             controls.boost = True
 
-        if my_location.dist(target_location) < 550:
-            if my_location.z < target_location.z + 100:
+        if current == "ball":
+            if my_location.dist(target_location) < 550:
+                if my_location.z < target_location.z + 100:
+                    self.front_flip(packet)
+
+                elif my_location.z < target_location.z + 500:
+                    self.active_sequence = Sequence([
+                        ControlStep(0.2, SimpleControllerState(jump=True)),
+                        ControlStep(0.05, SimpleControllerState(jump=False)),
+                        ControlStep(0.2, SimpleControllerState(jump=True, pitch=-1)),
+                        ControlStep(0.8, SimpleControllerState()),
+                    ])
+                
+                else:
+                    self.active_sequence = Sequence([
+                        ControlStep(0.2, SimpleControllerState(jump=True)),
+                        ControlStep(0.05, SimpleControllerState(jump=False)),
+                        ControlStep(0.2, SimpleControllerState(jump=True)),
+                        ControlStep(0.05, SimpleControllerState()),
+                    ])
+        elif current == "rotate":
+            if my_location.dist(target_location) > 1000 and my_speed.length() < 2000 and my_speed.length() > 500 and abs(controls.steer) < 0.3:
+                controls.boost = False
                 self.front_flip(packet)
 
-            elif my_location.z < target_location.z + 500:
-                self.active_sequence = Sequence([
-                    ControlStep(0.2, SimpleControllerState(jump=True)),
-                    ControlStep(0.05, SimpleControllerState(jump=False)),
-                    ControlStep(0.2, SimpleControllerState(jump=True, pitch=-1)),
-                    ControlStep(0.8, SimpleControllerState()),
-                ])
-            
-            else:
-                self.active_sequence = Sequence([
-                    ControlStep(0.2, SimpleControllerState(jump=True)),
-                    ControlStep(0.05, SimpleControllerState(jump=False)),
-                    ControlStep(0.2, SimpleControllerState(jump=True)),
-                    ControlStep(0.05, SimpleControllerState()),
-                ])
 
         return controls
     
+    def behind_ball(self, team, loc, ball_loc):
+        print
+        if team == 1:
+            y = loc.y * -1
+            ball_y = ball_loc.y * -1
+        if y < ball_y:
+            return True
+        return False
+
     def front_flip(self, packet):
 
         self.active_sequence = Sequence([
