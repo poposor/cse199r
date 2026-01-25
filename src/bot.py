@@ -1,3 +1,4 @@
+import math
 from rlbot.agents.base_agent import BaseAgent, SimpleControllerState
 from rlbot.utils.structures.game_data_struct import GameTickPacket
 
@@ -32,13 +33,17 @@ class Knarr(BaseAgent):
         ball_location = Vec3(packet.game_ball.physics.location)
 
         if self.behind_ball(self.team, my_location, ball_location):
-            target_location = ball_location
+            # target_location = ball_location
+            target_location = self.adjust_target(self.team, ball_location)
             current = "ball"
         else:
-            target_location = Vec3(0, 3500 * (-1 if self.team == 0 else 1), 100)
+            target_location = Vec3(0, 5120 * (-1 if self.team == 0 else 1), 100)
             current = "rotate"
 
         self.renderer.draw_line_3d(my_location, target_location, self.renderer.cyan())
+
+        goal = Vec3(0, 5120 * (1 if self.team == 0 else -1), 0)
+        self.renderer.draw_line_3d(ball_location, goal, self.renderer.red())
 
         controls.steer = steer_toward_target(my_car, target_location)
         controls.throttle = 1
@@ -47,7 +52,7 @@ class Knarr(BaseAgent):
             controls.boost = True
 
         if current == "ball":
-            if my_location.dist(target_location) < 550:
+            if my_location.dist(target_location) < 550 and abs(controls.steer) < 0.5:
                 if my_location.z < target_location.z + 100:
                     self.front_flip(packet)
 
@@ -67,13 +72,15 @@ class Knarr(BaseAgent):
                         ControlStep(0.05, SimpleControllerState()),
                     ])
         elif current == "rotate":
-            if my_location.dist(target_location) > 1000 and my_speed.length() < 2000 and my_speed.length() > 500 and abs(controls.steer) < 0.3:
+            if my_location.dist(target_location) > 2000 and my_speed.length() < 2000 and my_speed.length() > 500 and abs(controls.steer) < 0.3:
                 controls.boost = False
                 self.front_flip(packet)
 
 
         return controls
     
+
+    # Am I behind the ball?
     def behind_ball(self, team, loc, ball_loc):
         print
         if team == 1:
@@ -82,6 +89,15 @@ class Knarr(BaseAgent):
         if y < ball_y:
             return True
         return False
+
+    def adjust_target(self, team, ball_loc):
+        goal = Vec3(0, 5120 * (1 if self.team == 0 else -1), 0)
+        direction = ball_loc - goal
+        angle = math.atan2(direction.y, direction.x)
+        # Offset parallel to the shot direction
+        offset = Vec3(100 * math.cos(angle), 100 * math.sin(angle), 0)
+        self.renderer.draw_line_3d(ball_loc + offset, ball_loc, self.renderer.red())
+        return ball_loc + offset
 
     def front_flip(self, packet):
 
