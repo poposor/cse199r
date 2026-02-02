@@ -44,13 +44,27 @@ class Knarr(BaseAgent):
             # target_location = ball_location
             target_location = self.adjust_target(my_car, self.team, ball_location)
             self.current = "ball"
-            if my_location.dist(ball_location) > 1500:
+            speed = my_speed.length()
+            if my_location.dist(ball_location) > min(1000, speed):
+                # Estimate how long it will take to reach the ball based on current speed
+                distance = my_location.dist(ball_location)
+                
+                # Avoid division by tiny speed which would produce a huge lookahead. Use a reasonable minimum speed.
+                min_speed = 500.0
+                speed_for_estimate = max(speed, min_speed)
+                time_to_reach = distance / speed_for_estimate
+                # Add a small buffer and clamp lookahead to a reasonable range (0.5s to 5s)
+                lookahead = max(0.5, min(time_to_reach/2, 2.0))
+
                 ball_prediction = self.get_ball_prediction_struct()  # This can predict bounces, etc
-                ball_in_future = find_slice_at_time(ball_prediction, packet.game_info.seconds_elapsed + 1)
+                if ball_prediction is not None:
+                    # Clamp target time against the prediction's last available slice
+                    last_time = ball_prediction.slices[-1].game_seconds
+                    target_time = min(packet.game_info.seconds_elapsed + lookahead, last_time)
+                    ball_in_future = find_slice_at_time(ball_prediction, target_time)
 
-
-                if ball_in_future is not None:
-                    target_location = Vec3(ball_in_future.physics.location)
+                    if ball_in_future is not None:
+                        target_location = self.adjust_target(my_car, self.team, Vec3(ball_in_future.physics.location), 200)
         else:
             target_location = Vec3(0, 5120 * (-1 if self.team == 0 else 1), 100)
             self.current = "rotate"
@@ -67,9 +81,9 @@ class Knarr(BaseAgent):
         if steer_mag < 0.5:
             controls.boost = True
         else:
-            min_thresh = 0.8
-            if steer_mag > min_thresh:
-                prob = (steer_mag - 0.7) / 1
+            min_thresh = 1
+            if steer_mag >= min_thresh:
+                prob = (steer_mag - 0.9) / 1
                 if random.random() < prob:
                     controls.handbrake = True
                     # print(f"Partial power slide (p={prob:.2f}):", controls.steer)
@@ -91,7 +105,7 @@ class Knarr(BaseAgent):
             print(kickoffLoc, " pos: ", kickoffLocations[kickoffLoc], " dist: ", my_location.dist(kickoffLocations[kickoffLoc]), " my loc: ", my_location)
             self.kickoff(packet, kickoffLoc)
         elif self.current == "ball":
-            if my_location.dist(target_location) < 550 and abs(controls.steer) < 0.5:
+            if my_location.dist(target_location) < 550 and abs(controls.steer) < 0.2:
                 if my_location.z < target_location.z + 100:
                     self.front_flip(packet)
 
@@ -121,7 +135,7 @@ class Knarr(BaseAgent):
     def kickoff(self, packet, loc):
         if loc == 0:
             self.active_sequence = Sequence([
-                ControlStep(0.5, SimpleControllerState(steer=1, throttle=1)),
+                ControlStep(0.2, SimpleControllerState(steer=1, throttle=1)),
                 ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=-1, throttle=1, jump=True)),
                 ControlStep(0.05, SimpleControllerState(throttle=1, jump=False)),
                 ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=-1, throttle=1, jump=True)),
@@ -143,12 +157,12 @@ class Knarr(BaseAgent):
             return True
         return False
 
-    def adjust_target(self, my_car, team, ball_loc):
+    def adjust_target(self, my_car, team, ball_loc, mag = 91.25):
         goal = Vec3(0, 5120 * (1 if self.team == 0 else -1), 0)
         direction = ball_loc - goal
         angle = math.atan2(direction.y, direction.x)
         # Offset parallel to the shot direction
-        offset = Vec3((my_car.hitbox.width/2 + 91.25) * math.cos(angle), 91.25 * math.sin(angle), 0)
+        offset = Vec3((my_car.hitbox.width/2 + mag) * math.cos(angle), mag * math.sin(angle), 0)
         self.renderer.draw_line_3d(ball_loc + offset, ball_loc, self.renderer.red())
         return ball_loc + offset
 
