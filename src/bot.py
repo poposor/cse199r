@@ -34,52 +34,54 @@ class Knarr(BaseAgent):
         my_location = Vec3(my_car.physics.location)
         my_speed = Vec3(my_car.physics.velocity)
         ball_location = Vec3(packet.game_ball.physics.location)
-        if packet.game_info.is_kickoff_pause == False:
-            self.isKickoff = False
-        if packet.game_info.is_kickoff_pause and self.isKickoff == False:
-            self.isKickoff = True
-            print("begin kickoff?")
-            self.current = "kickoff"
-        elif self.behind_ball(self.team, my_location, ball_location):
-            # target_location = ball_location
-            target_location = self.adjust_target(my_car, self.team, ball_location)
-            self.current = "ball"
-            speed = my_speed.length()
-            if my_location.dist(ball_location) > min(1000, speed):
-                # Estimate how long it will take to reach the ball based on current speed
-                distance = my_location.dist(ball_location)
+        # if packet.game_info.is_kickoff_pause == False:
+        #     self.isKickoff = False
+        # if packet.game_info.is_kickoff_pause and self.isKickoff == False:
+        #     self.isKickoff = True
+        #     print("begin kickoff?")
+        #     self.current = "kickoff"
+        # elif self.behind_ball(self.team, my_location, ball_location):
+        #     # target_location = ball_location
+        #     target_location = self.adjust_target(my_car, self.team, ball_location)
+        #     self.current = "ball"
+        #     speed = my_speed.length()
+        #     if my_location.dist(ball_location) > min(1000, speed):
+        #         # Estimate how long it will take to reach the ball based on current speed
+        #         distance = my_location.dist(ball_location)
                 
-                # Avoid division by tiny speed which would produce a huge lookahead. Use a reasonable minimum speed.
-                min_speed = 500.0
-                speed_for_estimate = max(speed, min_speed)
-                time_to_reach = distance / speed_for_estimate
-                # Add a small buffer and clamp lookahead to a reasonable range (0.5s to 5s)
-                lookahead = max(0.5, min(time_to_reach/2, 2.0))
+        #         # Avoid division by tiny speed which would produce a huge lookahead. Use a reasonable minimum speed.
+        #         min_speed = 500.0
+        #         speed_for_estimate = max(speed, min_speed)
+        #         time_to_reach = distance / speed_for_estimate
+        #         # Add a small buffer and clamp lookahead to a reasonable range (0.5s to 5s)
+        #         lookahead = max(0.5, min(time_to_reach/2, 2.0))
 
-                ball_prediction = self.get_ball_prediction_struct()  # This can predict bounces, etc
-                if ball_prediction is not None:
-                    # Clamp target time against the prediction's last available slice
-                    last_time = ball_prediction.slices[-1].game_seconds
-                    target_time = min(packet.game_info.seconds_elapsed + lookahead, last_time)
-                    ball_in_future = find_slice_at_time(ball_prediction, target_time)
+        #         ball_prediction = self.get_ball_prediction_struct()  # This can predict bounces, etc
+        #         if ball_prediction is not None:
+        #             # Clamp target time against the prediction's last available slice
+        #             last_time = ball_prediction.slices[-1].game_seconds
+        #             target_time = min(packet.game_info.seconds_elapsed + lookahead, last_time)
+        #             ball_in_future = find_slice_at_time(ball_prediction, target_time)
 
-                    if ball_in_future is not None:
-                        target_location = self.adjust_target(my_car, self.team, Vec3(ball_in_future.physics.location), 200)
-        else:
-            target_location = Vec3(0, 5120 * (-1 if self.team == 0 else 1), 100)
-            self.current = "rotate"
+        #             if ball_in_future is not None:
+        #                 target_location = self.adjust_target(my_car, self.team, Vec3(ball_in_future.physics.location), 200)
+        # else:
+        #     target_location = Vec3(0, 5120 * (-1 if self.team == 0 else 1), 100)
+        #     self.current = "rotate"
         
-        if self.current != "kickoff":
-            self.renderer.draw_line_3d(my_location, target_location, self.renderer.cyan())
+        # if self.current != "kickoff":
+        #     self.renderer.draw_line_3d(my_location, target_location, self.renderer.cyan())
 
-            goal = Vec3(0, 5120 * (1 if self.team == 0 else -1), 0)
-            self.renderer.draw_line_3d(ball_location, goal, self.renderer.red())
+        #     goal = Vec3(0, 5120 * (1 if self.team == 0 else -1), 0)
+        #     self.renderer.draw_line_3d(ball_location, goal, self.renderer.red())
 
-            controls.steer = steer_toward_target(my_car, target_location)
-            controls.throttle = 1
-        steer_mag = abs(controls.steer)
-        if steer_mag < 0.5 and my_speed.length() < 2000:
-            controls.boost = True
+        #     controls.steer = steer_toward_target(my_car, target_location)
+        #     controls.throttle = 1
+        # steer_mag = abs(controls.steer)
+        # if steer_mag < 0.5 and my_speed.length() < 2000:
+        #     controls.boost = True
+
+        self.current = "dribble"
 
         flip = -1 if self.team == 0 else 1
         kickoffLocations = [
@@ -118,10 +120,32 @@ class Knarr(BaseAgent):
                         ControlStep(0.05, SimpleControllerState()),
                     ])
         elif self.current == "rotate":
+        
             if my_location.dist(target_location) > 2000 and my_speed.length() < 2000 and my_speed.length() > 500 and abs(controls.steer) < 0.3 and my_car.has_wheel_contact:
                 controls.boost = False
                 self.front_flip(packet)
+        elif self.current == "dribble":
+            dribbleGoal = "approach"
+            # Approach
+            if dribbleGoal == "approach":
+                if my_location.dist(ball_location) > 1000:
+                    controls.steer = steer_toward_target(my_car, ball_location)
+                    controls.throttle = my_location.dist(ball_location) / 2000
+                else:
+                    dribbleGoal = "pop"
+            # Pop up
+            if dribbleGoal == "pop":
+                if my_location.z < ball_location.z + 100:
+                    controls.throttle = 1
+                    controls.boost = True
+                else:
+                    dribbleGoal = "catch"
+            # Catch
+            if dribbleGoal == "catch":
+                controls.steer = steer_toward_target(my_car, ball_location)
+                controls.throttle = 1
 
+                
 
         return controls
     
