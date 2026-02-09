@@ -78,15 +78,8 @@ class Knarr(BaseAgent):
             controls.steer = steer_toward_target(my_car, target_location)
             controls.throttle = 1
         steer_mag = abs(controls.steer)
-        if steer_mag < 0.5:
+        if steer_mag < 0.5 and my_speed.length() < 2000:
             controls.boost = True
-        else:
-            min_thresh = 1
-            if steer_mag >= min_thresh:
-                prob = (steer_mag - 0.9) / 1
-                if random.random() < prob:
-                    controls.handbrake = True
-                    # print(f"Partial power slide (p={prob:.2f}):", controls.steer)
 
         flip = -1 if self.team == 0 else 1
         kickoffLocations = [
@@ -135,11 +128,35 @@ class Knarr(BaseAgent):
     def kickoff(self, packet, loc):
         if loc == 0:
             self.active_sequence = Sequence([
-                ControlStep(0.2, SimpleControllerState(steer=1, throttle=1)),
-                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=-1, throttle=1, jump=True)),
-                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False)),
-                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=-1, throttle=1, jump=True)),
-                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False)),
+                ControlStep(0.15, SimpleControllerState(steer=1, throttle=1, boost=True)),
+                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=-1, throttle=1, jump=True, boost=True)),
+                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False, boost=True)),
+                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=-1, throttle=1, jump=True, boost=True)),
+                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False, boost=True)),
+            ])
+        elif loc == 1:
+            self.active_sequence = Sequence([
+                ControlStep(0.15, SimpleControllerState(steer=-1, throttle=1, boost=True)),
+                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=1, throttle=1, jump=True, boost=True)),
+                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False, boost=True)),
+                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=1, throttle=1, jump=True, boost=True)),
+                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False, boost=True)),
+            ])
+        elif loc == 2:
+            self.active_sequence = Sequence([
+                ControlStep(0.2, SimpleControllerState(throttle=1, steer = 0.2)),
+                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=-1, throttle=1, jump=True, boost = True)),
+                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False, boost=True)),
+                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=-1, throttle=1, jump=True, boost=True)),
+                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False, boost=True)),
+            ])
+        elif loc == 3:
+            self.active_sequence = Sequence([
+                ControlStep(0.2, SimpleControllerState(throttle=1, steer = -0.2)),
+                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=1, throttle=1, jump=True, boost=True)),
+                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False, boost=True)),
+                ControlStep(0.05, SimpleControllerState(pitch=-1, yaw=1, throttle=1, jump=True, boost=True)),
+                ControlStep(0.05, SimpleControllerState(throttle=1, jump=False, boost=True)),
             ])
         elif loc < 5:
             return self.active_sequence.tick(packet)
@@ -149,7 +166,8 @@ class Knarr(BaseAgent):
 
     # Am I behind the ball?
     def behind_ball(self, team, loc, ball_loc):
-        print
+        y = loc.y
+        ball_y = ball_loc.y
         if team == 1:
             y = loc.y * -1
             ball_y = ball_loc.y * -1
@@ -162,9 +180,27 @@ class Knarr(BaseAgent):
         direction = ball_loc - goal
         angle = math.atan2(direction.y, direction.x)
         # Offset parallel to the shot direction
-        offset = Vec3((my_car.hitbox.width/2 + mag) * math.cos(angle), mag * math.sin(angle), 0)
-        self.renderer.draw_line_3d(ball_loc + offset, ball_loc, self.renderer.red())
-        return ball_loc + offset
+        offset = Vec3(mag * math.cos(angle), mag * math.sin(angle), 0)
+        target = ball_loc + offset
+        self.renderer.draw_line_3d(target, ball_loc, self.renderer.red())
+
+        self.renderer.draw_line_3d(target, Vec3(target.x + 4000 * math.cos(angle), target.y + 4000 * math.sin(angle), 0), self.renderer.purple())
+        my_pos = my_car.physics.location
+        my_rot = my_car.physics.rotation
+        self.renderer.draw_line_3d(my_pos, Vec3(my_pos.x + 4000 * math.cos(my_rot.yaw), my_pos.y + 4000 * math.sin(my_rot.yaw), 0), self.renderer.green())
+        
+        car_ang_to_goal = math.atan2(goal.y - my_pos.y, goal.x - my_pos.x)
+        goal_to_ball_ang = math.atan2(ball_loc.y - goal.y, ball_loc.x - goal.x)
+        angle_between = abs(abs(car_ang_to_goal - goal_to_ball_ang) - math.pi)
+
+        # print(car_ang_to_goal * 180 / math.pi, " ", goal_to_ball_ang * 180 / math.pi, " ", angle_between * 180 / math.pi)
+        self.renderer.draw_string_3d(my_pos, 8,8, f"Angle: {(angle_between*180/math.pi):.1f}", self.renderer.white())
+        # if abs(angle_between) < math.pi / 2:
+            
+            
+            
+        #     self.renderer.draw_line_3d(target, ball_loc, self.renderer.yellow())
+        return target
 
     def front_flip(self, packet):
 
