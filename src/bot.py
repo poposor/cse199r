@@ -14,12 +14,13 @@ class Knarr(BaseAgent):
     def __init__(self, name, team, index):
         super().__init__(name, team, index)
         self.active_sequence: Sequence = None
+        self.current = "ball"
+        self.isKickoff = False
+        self.dribbleGoal = "approach"
 
     def initialize_agent(self):
         print("Knarr is on team: ", self.team)
 
-    current = "ball"
-    isKickoff = False
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
         my_car = packet.game_cars[self.index]
         controls = SimpleControllerState()
@@ -33,6 +34,7 @@ class Knarr(BaseAgent):
 
         my_location = Vec3(my_car.physics.location)
         my_speed = Vec3(my_car.physics.velocity)
+        my_rot = my_car.physics.rotation
         ball_location = Vec3(packet.game_ball.physics.location)
         # if packet.game_info.is_kickoff_pause == False:
         #     self.isKickoff = False
@@ -81,6 +83,30 @@ class Knarr(BaseAgent):
         # if steer_mag < 0.5 and my_speed.length() < 2000:
         #     controls.boost = True
 
+        last_pred = None
+        target_pred = None
+        timeToCatch = 0
+        reachedApex = False
+        for i in range(20):
+            pred_slice = find_slice_at_time(self.get_ball_prediction_struct(), packet.game_info.seconds_elapsed + i * 0.1)
+            if pred_slice is not None:
+                if last_pred is not None:
+                    self.renderer.draw_line_3d(Vec3(last_pred.physics.location), Vec3(pred_slice.physics.location), self.renderer.cyan())
+                    if pred_slice.physics.location.z < last_pred.physics.location.z:
+                        reachedApex = True
+                    if reachedApex and pred_slice.physics.location.z <= 36 + 92.5:
+                        target_pred = pred_slice
+                        timeToCatch = i * 0.1
+
+                        break
+                else: 
+                    self.renderer.draw_line_3d(ball_location, Vec3(pred_slice.physics.location), self.renderer.red())
+            last_pred = pred_slice
+        
+        if target_pred is not None:
+            target_location = Vec3(target_pred.physics.location)
+        else:
+            target_location = ball_location
         self.current = "dribble"
 
         flip = -1 if self.team == 0 else 1
@@ -125,25 +151,86 @@ class Knarr(BaseAgent):
                 controls.boost = False
                 self.front_flip(packet)
         elif self.current == "dribble":
-            dribbleGoal = "approach"
             # Approach
-            if dribbleGoal == "approach":
-                if my_location.dist(ball_location) > 1000:
+            if self.dribbleGoal == "approach":
+                print("approach")
+                if my_location.dist(ball_location) > 200:
                     controls.steer = steer_toward_target(my_car, ball_location)
-                    controls.throttle = my_location.dist(ball_location) / 2000
+                    controls.throttle = my_location.dist(ball_location) / 3000
                 else:
-                    dribbleGoal = "pop"
+                    self.dribbleGoal = "pop"
             # Pop up
-            if dribbleGoal == "pop":
-                if my_location.z < ball_location.z + 100:
+            if self.dribbleGoal == "pop":
+                print("pop")
+                print("ball z: ", ball_location.z, " my z: ", my_location.z)
+                if ball_location.z < 150 and my_location.dist(ball_location) < 300:
+                    controls.steer = steer_toward_target(my_car, ball_location)
                     controls.throttle = 1
                     controls.boost = True
                 else:
-                    dribbleGoal = "catch"
+                    self.dribbleGoal = "catch"
             # Catch
-            if dribbleGoal == "catch":
-                controls.steer = steer_toward_target(my_car, ball_location)
-                controls.throttle = 1
+            if self.dribbleGoal == "catch":
+                print("catch")
+                # Position the car under the target location (predicted catch point)
+                target_under_ball = Vec3(target_location.x, target_location.y, my_location.z)
+                controls.steer = steer_toward_target(my_car, target_under_ball)
+                # Determine if the target is ahead or behind relative to the car
+                forward = Vec3(math.cos(my_rot.yaw), math.sin(my_rot.yaw), 0)
+                to_target = (target_location - my_location).flat()
+                forward_dot = forward.dot(to_target)
+                h_dist = to_target.length()
+
+                # Project velocities onto the car's forward vector
+                ball_vel = Vec3(packet.game_ball.physics.velocity)
+                my_forward_speed = forward.dot(my_speed)
+                ball_forward_speed = forward.dot(ball_vel)
+
+                # Physics constants (uu/s and uu/s^2)
+                MAX_SPEED_BOOST = 2300.0
+                MAX_SPEED_NO_BOOST = 1410.0
+                BOOST_ACCEL_GROUND = 991.666
+                THROTTLE_ACCEL_GROUND = 350.0  # Conservative estimate for throttle-only acceleration
+                
+                # Calculate required speed to arrive at catch point at the right time
+                if timeToCatch > 0.1:
+                    required_speed = h_dist / timeToCatch
+                    speed_error = required_speed - my_forward_speed
+                    
+                    # Determine if we need boost to achieve required speed in time
+                    # Check what speed we can reach without boost
+                    speed_reachable_no_boost = min(my_forward_speed + (THROTTLE_ACCEL_GROUND * timeToCatch), MAX_SPEED_NO_BOOST)
+                    
+                    # Only boost if:
+                    # 1. Target is ahead
+                    # 2. Required speed exceeds what's reachable without boost
+                    # 3. Required speed is achievable with boost
+                    if forward_dot > 0 and required_speed > speed_reachable_no_boost and required_speed <= MAX_SPEED_BOOST and my_car.has_wheel_contact:
+                        controls.boost = True
+                    else:
+                        controls.boost = False
+                    
+                    # Cap required speed to what's actually achievable
+                    max_achievable = MAX_SPEED_BOOST if controls.boost else MAX_SPEED_NO_BOOST
+                    required_speed = min(required_speed, max_achievable)
+                    speed_error = required_speed - my_forward_speed
+                    
+                    # Scale throttle based on speed error
+                    throttle_cmd = max(-1.0, min(1.0, speed_error / 1500.0))
+                    controls.throttle = throttle_cmd
+                else:
+                    # Very close to catch time, just match ball speed
+                    speed_error = ball_forward_speed - my_forward_speed
+                    throttle_cmd = max(-1.0, min(1.0, speed_error / 1200.0))
+                    controls.throttle = throttle_cmd
+                    if throttle_cmd > 0.8 and ball_forward_speed > 1400:
+                        controls.boost = True
+                    else:
+                        controls.boost = False
+
+                # If ball has come back down close to ground, switch to approach
+                if ball_location.z < 100:
+                    self.dribbleGoal = "approach"
 
                 
 
